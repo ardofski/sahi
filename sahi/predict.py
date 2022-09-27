@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from typing import List, Optional
+import math
 
 from sahi.utils.import_utils import is_available
 
@@ -85,6 +86,7 @@ def get_prediction(
     durations_in_seconds = dict()
 
     # read image as pil
+
     image_as_pil = read_image_as_pil(image)
     # get prediction
     time_start = time.time()
@@ -119,6 +121,78 @@ def get_prediction(
         image=image, object_prediction_list=object_prediction_list, durations_in_seconds=durations_in_seconds
     )
 
+def get_batched_prediction(
+    images,
+    detection_model,
+    shift_amount: list = [0, 0],
+    full_shape=None,
+    postprocess: Optional[PostprocessPredictions] = None,
+    verbose: int = 0,
+) -> PredictionResult:
+    """
+    Function for performing prediction for given image using given detection_model.
+
+    Arguments:
+        image: str or np.ndarray
+            Location of image or numpy image matrix to slice
+        detection_model: model.DetectionMode
+        shift_amount: List
+            To shift the box and mask predictions from sliced image to full
+            sized image, should be in the form of [shift_x, shift_y]
+        full_shape: List
+            Size of the full image, should be in the form of [height, width]
+        postprocess: sahi.postprocess.combine.PostprocessPredictions
+        verbose: int
+            0: no print (default)
+            1: print prediction duration
+
+    Returns:
+        A dict with fields:
+            object_prediction_list: a list of ObjectPrediction
+            durations_in_seconds: a dict containing elapsed times for profiling
+    """
+    durations_in_seconds = dict()
+
+    # read image as pil
+    images_as_pil = [ np.array( read_image_as_pil(image) ) for image in images]
+    # get prediction
+    time_start = time.time()
+    detection_model.perform_batched_inference( images_as_pil )
+    time_end = time.time() - time_start
+    durations_in_seconds["prediction"] = time_end
+
+    # process prediction
+    time_start = time.time()
+    # works only with 1 batch
+    detection_model.convert_original_predictions(
+        shift_amount=shift_amount,
+        full_shape=full_shape,
+    )
+    object_prediction_list = detection_model.object_prediction_list_per_image
+
+    # postprocess matching predictions
+    if postprocess is not None:
+        object_prediction_list = postprocess(object_prediction_list)
+
+    time_end = time.time() - time_start
+    durations_in_seconds["postprocess"] = time_end
+
+    if verbose == 1:
+        print(
+            "Prediction performed in",
+            durations_in_seconds["prediction"],
+            "seconds.",
+        )
+    
+    prediction_results = []
+    for id , object_prediction in enumerate(object_prediction_list):
+        current_prediction_res = PredictionResult(
+            image=images[id], object_prediction_list=object_prediction, durations_in_seconds=durations_in_seconds
+        )
+        prediction_results.append( current_prediction_res )
+
+    return prediction_results
+
 
 def get_sliced_prediction(
     image,
@@ -128,6 +202,7 @@ def get_sliced_prediction(
     overlap_height_ratio: float = 0.2,
     overlap_width_ratio: float = 0.2,
     perform_standard_pred: bool = True,
+    num_batch: int = 16,
     postprocess_type: str = "GREEDYNMM",
     postprocess_match_metric: str = "IOS",
     postprocess_match_threshold: float = 0.5,
@@ -190,8 +265,7 @@ def get_sliced_prediction(
     # for profiling
     durations_in_seconds = dict()
 
-    # currently only 1 batch supported
-    num_batch = 1
+    
 
     # create slices from full image
     time_start = time.time()
@@ -223,32 +297,54 @@ def get_sliced_prediction(
     )
 
     # create prediction input
-    num_group = int(num_slices / num_batch)
+    num_group = int( math.ceil(num_slices / num_batch) )
     if verbose == 1 or verbose == 2:
         tqdm.write(f"Performing prediction on {num_slices} number of slices.")
     object_prediction_list = []
     # perform sliced prediction
+    n_total_images = len( slice_image_result.images )
     for group_ind in range(num_group):
         # prepare batch (currently supports only 1 batch)
         image_list = []
         shift_amount_list = []
         for image_ind in range(num_batch):
+            if group_ind * num_batch + image_ind > n_total_images:
+                break
+
             image_list.append(slice_image_result.images[group_ind * num_batch + image_ind])
             shift_amount_list.append(slice_image_result.starting_pixels[group_ind * num_batch + image_ind])
+
         # perform batch prediction
-        prediction_result = get_prediction(
-            image=image_list[0],
-            detection_model=detection_model,
-            shift_amount=shift_amount_list[0],
-            full_shape=[
-                slice_image_result.original_image_height,
-                slice_image_result.original_image_width,
-            ],
-        )
-        # convert sliced predictions to full predictions
-        for object_prediction in prediction_result.object_prediction_list:
-            if object_prediction:  # if not empty
-                object_prediction_list.append(object_prediction.get_shifted_object_prediction())
+        if num_batch > 1:
+            prediction_results = get_batched_prediction(
+                images=image_list,
+                detection_model=detection_model,
+                shift_amount=shift_amount_list,
+                full_shape=[[
+                    slice_image_result.original_image_height,
+                    slice_image_result.original_image_width,
+                ] for _ in range(len(shift_amount_list)) ],
+            )
+            # convert sliced predictions to full predictions
+            for prediction_result in prediction_results:
+                for object_prediction in prediction_result.object_prediction_list:
+                    if object_prediction:  # if not empty
+                        object_prediction_list.append(object_prediction.get_shifted_object_prediction())
+        else:
+            prediction_result = get_prediction(
+                image=image_list[0],
+                detection_model=detection_model,
+                shift_amount=shift_amount_list[0],
+                full_shape=[
+                    slice_image_result.original_image_height,
+                    slice_image_result.original_image_width,
+                ],
+            )            
+            # convert sliced predictions to full predictions
+            for object_prediction in prediction_result.object_prediction_list:
+                if object_prediction:  # if not empty
+                    object_prediction_list.append(object_prediction.get_shifted_object_prediction())
+
 
         # merge matching predictions during sliced prediction
         if merge_buffer_length is not None and len(object_prediction_list) > merge_buffer_length:

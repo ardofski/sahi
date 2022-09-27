@@ -225,6 +225,7 @@ class MmdetDetectionModel(DetectionModel):
             image: np.ndarray
                 A numpy array that contains the image to be predicted. 3 channel image should be in RGB order.
         """
+
         check_requirements(["torch", "mmdet", "mmcv"])
 
         # Confirm model is loaded
@@ -243,6 +244,35 @@ class MmdetDetectionModel(DetectionModel):
         prediction_result = inference_detector(self.model, image)
 
         self._original_predictions = prediction_result
+
+    def perform_batched_inference(self, images: np.ndarray):
+        """
+        Prediction is performed using self.model and the prediction result is set to self._original_predictions.
+        Args:
+            image: np.ndarray
+                A numpy array that contains the image to be predicted. 3 channel image should be in RGB order.
+        """
+
+        check_requirements(["torch", "mmdet", "mmcv"])
+
+        # Confirm model is loaded
+        if self.model is None:
+            raise ValueError("Model is not loaded, load it by calling .load_model()")
+        # Supports only batch of 1
+        from mmdet.apis import inference_detector
+
+        # perform inference
+        if isinstance(images, np.ndarray):
+            # https://github.com/obss/sahi/issues/265
+            images = images[:, :, ::-1]
+        # compatibility with sahi v0.8.15
+        # if not isinstance(image, list):
+        #     image = [image]
+
+        prediction_result = inference_detector(self.model, images )
+
+        self._original_predictions = prediction_result
+
 
     @property
     def num_categories(self):
