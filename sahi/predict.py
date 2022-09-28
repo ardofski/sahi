@@ -310,7 +310,7 @@ def get_sliced_prediction(
         image_list = []
         shift_amount_list = []
         for image_ind in range(num_batch):
-            if (group_ind * num_batch + image_ind) > num_slices:
+            if (group_ind * num_batch + image_ind) >= num_slices:
                 break
 
             image_list.append(slice_image_result.images[group_ind * num_batch + image_ind])
