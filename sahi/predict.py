@@ -154,7 +154,7 @@ def get_batched_prediction(
     durations_in_seconds = dict()
 
     # read image as pil
-    images_as_pil = [ np.array( read_image_as_pil(image) ) for image in images]
+    images_as_pil = [ np.ascontiguousarray( np.array( read_image_as_pil(image) ) )  for image in images]
     # get prediction
     time_start = time.time()
     detection_model.perform_batched_inference( images_as_pil )
@@ -297,18 +297,18 @@ def get_sliced_prediction(
     )
 
     # create prediction input
-    num_group = int( math.ceil(num_slices / num_batch) )
+    num_group = int( math.floor(num_slices / num_batch) )
     if verbose == 1 or verbose == 2:
         tqdm.write(f"Performing prediction on {num_slices} number of slices.")
     object_prediction_list = []
     # perform sliced prediction
-    n_total_images = len( slice_image_result.images )
+
     for group_ind in range(num_group):
         # prepare batch (currently supports only 1 batch)
         image_list = []
         shift_amount_list = []
         for image_ind in range(num_batch):
-            if group_ind * num_batch + image_ind > n_total_images:
+            if (group_ind * num_batch + image_ind) > num_slices:
                 break
 
             image_list.append(slice_image_result.images[group_ind * num_batch + image_ind])
