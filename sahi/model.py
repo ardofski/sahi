@@ -245,7 +245,7 @@ class MmdetDetectionModel(DetectionModel):
 
         self._original_predictions = prediction_result
 
-    def perform_batched_inference(self, images: np.ndarray):
+    def perform_batched_inference(self, images):
         """
         Prediction is performed using self.model and the prediction result is set to self._original_predictions.
         Args:
@@ -266,13 +266,14 @@ class MmdetDetectionModel(DetectionModel):
             # https://github.com/obss/sahi/issues/265
             images = images[:, :, ::-1]
         # compatibility with sahi v0.8.15
-        # if not isinstance(image, list):
-        #     image = [image]
+        rev_images = []
+        if isinstance(images, list):
+            for image in images:
+                rev_images.append(image[:, :, ::-1])
+        images = rev_images
 
-        prediction_result = inference_detector(self.model, images )
-
+        prediction_result = inference_detector(self.model, images)
         self._original_predictions = prediction_result
-
 
     @property
     def num_categories(self):
